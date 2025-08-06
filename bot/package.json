@@ -1,0 +1,16 @@
+{
+  "name": "flashloan-arbitrage-bot",
+  "version": "1.0.0",
+  "description": "Arbitrage bot monitoring Uniswap and Sushiswap",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.1",
+    "ethers": "^6.15.0",
+    "web3": "^4.5.0",
+    "winston": "^3.17.0"
+  }
+}
