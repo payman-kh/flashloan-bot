@@ -1,5 +1,5 @@
 const { ethers } = require('ethers');
-const { arbitrageContract, wallet } = require('../utils/web3');
+const { arbitrageContract } = require('../utils/web3');
 const { WETH } = require('../../config/tokens');
 
 class ArbitrageService {
@@ -22,21 +22,31 @@ class ArbitrageService {
         }
 
         try {
-            // Prepare transaction parameters
-            const tx = await arbitrageContract.executeArbitrage(
-                buyDex === 'uniswap' ? 0 : 1, // dexIndex for buy
-                sellDex === 'uniswap' ? 0 : 1, // dexIndex for sell
-                WETH,                          // token to borrow (WETH)
-                tokenAddress,                  // token to trade
-                amount,                        // amount to trade
+            // Encode the parameters for the flash loan
+            const abiCoder = new ethers.AbiCoder();
+            const encodedParams = abiCoder.encode(
+                ['uint8', 'address', 'address', 'uint24', 'uint256'],
+                [
+                    buyDex === 'uniswap' ? 0 : 1,  // dexToBuy
+                    WETH,                          // tokenIn
+                    tokenAddress,                  // tokenOut
+                    3000,                         // poolFee (0.3% for Uniswap V3)
+                    expectedProfit                 // minProfit
+                ]
+            );
+
+            // Call requestFlashLoan instead of executeArbitrage
+            const tx = await arbitrageContract.requestFlashLoan(
+                WETH,           // asset to borrow
+                amount,         // amount to borrow
+                encodedParams,  // encoded parameters
                 {
                     gasLimit: process.env.GAS_LIMIT || 500000,
-                    maxFeePerGas: ethers.parseUnits('50', 'gwei'),  // adjust as needed
-                    maxPriorityFeePerGas: ethers.parseUnits('2', 'gwei')  // adjust as needed
+                    maxFeePerGas: ethers.parseUnits('50', 'gwei'),
+                    maxPriorityFeePerGas: ethers.parseUnits('2', 'gwei')
                 }
             );
 
-            // Wait for transaction confirmation
             const receipt = await tx.wait();
 
             return {
@@ -49,34 +59,6 @@ class ArbitrageService {
         } catch (error) {
             throw new Error(`Arbitrage execution failed: ${error.message}`);
         }
-    }
-
-    async estimateGas(params) {
-        const {
-            buyDex,
-            sellDex,
-            tokenAddress,
-            amount
-        } = params;
-
-        try {
-            const gasEstimate = await arbitrageContract.executeArbitrage.estimateGas(
-                buyDex === 'uniswap' ? 0 : 1,
-                sellDex === 'uniswap' ? 0 : 1,
-                WETH,
-                tokenAddress,
-                amount
-            );
-
-            return gasEstimate;
-        } catch (error) {
-            throw new Error(`Gas estimation failed: ${error.message}`);
-        }
-    }
-
-    calculateNetProfit(expectedProfit, gasEstimate, gasPrice) {
-        const gasCost = gasEstimate.mul(gasPrice);
-        return expectedProfit.sub(gasCost);
     }
 }
 

@@ -39,4 +39,4 @@ class PriceService {
     }
 }
 
-module.exports = new PriceService();
+module.exports = PriceService;

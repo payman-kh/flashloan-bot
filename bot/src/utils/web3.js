@@ -1,18 +1,27 @@
 const { ethers } = require('ethers');
-require('dotenv').config();
+require('dotenv').config({ path: '../.env' });
 
-const provider = new ethers.JsonRpcProvider(process.env.MAINNET_RPC_URL);
+// mainent
+//const provider = new ethers.JsonRpcProvider(process.env.MAINNET_RPC_URL);
+// testnet
+const provider = new ethers.JsonRpcProvider('http://127.0.0.1:8545');
 const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
 
-const FlashLoanArbitrage = require('../../../artifacts/contracts/FlashLoanArbitrage.sol/FlashLoanArbitrage.json');
+// Explicitly specify the ABI
+const FLASH_LOAN_ARBITRAGE_ABI = [
+    "function requestFlashLoan(address asset, uint256 amount, bytes calldata params) external",
+    "function executeOperation(address asset, uint256 amount, uint256 premium, address initiator, bytes calldata params) external returns (bool)",
+    "function withdraw(address token) external",
+    "function owner() view external returns (address)"
+];
 
 const arbitrageContract = new ethers.Contract(
     process.env.ARBITRAGE_CONTRACT_ADDRESS,
-    FlashLoanArbitrage.abi,
+    FLASH_LOAN_ARBITRAGE_ABI,
     wallet
 );
 
-// Add DEX router contracts
+// Rest of the code remains the same
 const uniswapRouter = new ethers.Contract(
     process.env.UNISWAP_V3_ROUTER,
     ['function exactInputSingle(tuple(address,address,uint24,address,uint256,uint256,uint256,uint160)) external payable returns (uint256)'],

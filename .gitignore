@@ -3,8 +3,8 @@ bot/node_modules/
 contract/node_modules/
 
 # Environment variables
-bot/.env
-contract/.env
+.env
+
 
 # Hardhat files (for contracts project)
 contract/artifacts/
