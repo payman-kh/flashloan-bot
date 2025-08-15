@@ -7,7 +7,7 @@ describe("FlashLoanArbitrage", function () {
     const WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
     const USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
     const POOL_FEE = 3000; // 0.3%
-    const MIN_PROFIT = ethers.parseEther("0.1"); // 0.1 ETH minimum profit
+    const MIN_PROFIT = ethers.parseEther("0.005"); // 0.005 ETH minimum profit
 
     let flashLoanArbitrage;
     let owner;

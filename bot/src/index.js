@@ -1,42 +1,102 @@
+// src/index.js
+require('dotenv').config();
 const { ethers } = require('ethers');
-const { provider } = require('../utils/web3');
-const IUniswapV3Pool = require('@uniswap/v3-core/artifacts/contracts/interfaces/IUniswapV3Pool.sol/IUniswapV3Pool.json');
-const { tokens, WETH } = require('../../config/tokens');
+const { provider, arbitrageContract } = require('./utils/web3');
+const priceService = require('./services/priceService');
+const { findOptimalSize } = require('./opt/size-optimizer');
+const { WETH, tokens } = require('../config/tokens');
 
-class PriceService {
+class ArbitrageBot {
     constructor() {
-        this.uniswapRouter = '0xE592427A0AEce92De3Edee1F18E0157C05861564';
-        this.sushiswapRouter = '0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F';
+        this.minProfitThreshold = ethers.parseEther(process.env.MIN_PROFIT_THRESHOLD || '0.005');
+        this.supportedDexes = ['uniswap', 'sushiswap']; // Only these two will execute
     }
 
-    async getPriceFromUniswap(tokenA, tokenB, amount) {
-        // Implementation for getting Uniswap price
-        // This is a simplified version - you'll need to implement the actual price calculation
-        const pool = new ethers.Contract(poolAddress, IUniswapV3Pool.abi, provider);
-        const slot0 = await pool.slot0();
-        return slot0.sqrtPriceX96;
+    async checkAndExecute(tokenSymbol) {
+        const tokenData = tokens.find(t => t.symbol === tokenSymbol);
+        if (!tokenData) throw new Error(`Token ${tokenSymbol} not found`);
+
+        const tokenAddress = tokenData.address;
+
+        // Only execute Uniswap <-> SushiSwap
+        const dexPairs = [
+            ['uniswap', 'sushiswap'],
+            ['sushiswap', 'uniswap']
+        ];
+
+        for (const [buyDex, sellDex] of dexPairs) {
+            if (!this.supportedDexes.includes(buyDex) || !this.supportedDexes.includes(sellDex)) continue;
+
+            const { quoteBuy, quoteSell } = priceService.getQuoteFns({
+                buyDex,
+                sellDex,
+                tokenAddress
+            });
+
+            // Estimate gas cost
+            const feeData = await provider.getFeeData();
+            const maxFeePerGas = feeData.maxFeePerGas ?? ethers.parseUnits('40', 'gwei');
+            const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas ?? ethers.parseUnits('2', 'gwei');
+            const assumedGas = 450_000n;
+            const gasCostWei = assumedGas * BigInt(maxFeePerGas.toString());
+
+            // Determine min/max input for optimizer
+            const minIn = ethers.parseEther('0.02');
+            const maxIn = ethers.parseEther('10');
+
+            const opt = await findOptimalSize({
+                minIn,
+                maxIn,
+                quoteBuy,
+                quoteSell,
+                gasCostWei,
+                maxIterations: 40n,
+                segments: 4096n,
+                finalPoints: 41n
+            });
+
+            if (opt.profit <= 0n || opt.sizeIn === 0n) continue;
+            if (opt.profit < this.minProfitThreshold) continue;
+
+            console.log(`Arbitrage opportunity: Buy ${buyDex}, Sell ${sellDex}, Profit: ${ethers.formatEther(opt.profit)} ETH`);
+
+            // Encode params for flash loan
+            const abiCoder = new ethers.AbiCoder();
+            const dexToBuyId = buyDex === 'uniswap' ? 0 : 1;
+            const encodedParams = abiCoder.encode(
+                ['uint8', 'address', 'address', 'uint24', 'uint256'],
+                [dexToBuyId, WETH, tokenAddress, 3000, opt.profit]
+            );
+
+            const tx = await arbitrageContract.requestFlashLoan(
+                WETH,
+                opt.sizeIn,
+                encodedParams,
+                {
+                    gasLimit: BigInt(process.env.GAS_LIMIT || '550000'),
+                    maxFeePerGas,
+                    maxPriorityFeePerGas
+                }
+            );
+
+            const receipt = await tx.wait();
+            console.log(`Transaction executed. Hash: ${receipt.transactionHash}`);
+        }
     }
 
-    async getPriceFromSushiswap(tokenA, tokenB, amount) {
-        // Implementation for getting Sushiswap price
-        // You'll need to implement the actual price calculation
-    }
-
-    async findArbitrageOpportunity(tokenA, tokenB, amount) {
-        const uniswapPrice = await this.getPriceFromUniswap(tokenA, tokenB, amount);
-        const sushiswapPrice = await this.getPriceFromSushiswap(tokenA, tokenB, amount);
-
-        const priceDifference = uniswapPrice - sushiswapPrice;
-        const profitableAmount = this.calculateProfitableAmount(priceDifference);
-
-        return {
-            profitable: profitableAmount > 0,
-            buyDex: priceDifference > 0 ? 'sushiswap' : 'uniswap',
-            sellDex: priceDifference > 0 ? 'uniswap' : 'sushiswap',
-            profitableAmount,
-            expectedProfit: Math.abs(priceDifference) * profitableAmount
-        };
+    async run() {
+        for (const token of tokens) {
+            try {
+                await this.checkAndExecute(token.symbol);
+            } catch (err) {
+                console.error(`Error processing ${token.symbol}:`, err.message);
+            }
+        }
     }
 }
 
-module.exports = PriceService;
+module.exports = ArbitrageBot;
+
+// Usage example:
+// const bot = new ArbitrageBot();
+// bot.run();

@@ -37,9 +37,6 @@ contract FlashLoanArbitrage is IFlashLoanSimpleReceiver {
 
     address constant UNISWAP_V3_ROUTER = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
     address constant SUSHISWAP_ROUTER  = 0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F;
-    address constant BALANCER_VAULT  = 0xBA12222222228d8Ba445958a75a0704d566BF2C8;
-    address constant CURVE_POOL      = 0x45F783CCE6B7FF23B2ab2D70e416cdb7D6055f51;
-    address constant KYBER_ROUTER    = 0xdef1c0ded9bec7f1a1670819833240f027b25eff;
 
     event FlashLoanExecuted(address asset, uint256 amount, uint256 premium);
     event SwapExecuted(string dex, address fromToken, address toToken, uint256 amountIn, uint256 amountOut);
@@ -66,7 +63,6 @@ contract FlashLoanArbitrage is IFlashLoanSimpleReceiver {
     ) external onlyOwner {
         POOL.flashLoanSimple(address(this), asset, amount, params, 0);
     }
-
     function executeOperation(
         address asset,
         uint256 amount,
@@ -74,36 +70,34 @@ contract FlashLoanArbitrage is IFlashLoanSimpleReceiver {
         address initiator,
         bytes calldata params
     ) external override returns (bool) {
+        require(msg.sender == address(POOL) && initiator == address(this), "Invalid caller");
+
         (uint8 dexToBuy, address tokenIn, address tokenOut, uint24 poolFee, uint256 minProfit) =
                             abi.decode(params, (uint8, address, address, uint24, uint256));
 
         require(tokenIn == asset, "Flash loan asset mismatch");
-        IERC20(tokenIn).approve(address(this), amount); // general approval
+
+        // Handle first approval outside the if-else
+        IERC20(tokenIn).approve(dexToBuy == 0 ? UNISWAP_V3_ROUTER : SUSHISWAP_ROUTER, amount);
 
         uint256 amountOut;
         uint256 amountBack;
 
         if (dexToBuy == 0) {
+            // Buy on Uniswap, sell on SushiSwap
             amountOut = _swapOnUniswap(tokenIn, tokenOut, poolFee, amount, address(this));
             amountBack = _swapOnSushiSwap(tokenOut, tokenIn, amountOut);
         } else if (dexToBuy == 1) {
+            // Buy on SushiSwap, sell on Uniswap
             amountOut = _swapOnSushiSwap(tokenIn, tokenOut, amount);
             amountBack = _swapOnUniswap(tokenOut, tokenIn, poolFee, amountOut, address(this));
-        } else if (dexToBuy == 2) {
-            amountOut = _swapOnBalancer(tokenIn, tokenOut, amount);
-            amountBack = _swapOnUniswap(tokenOut, tokenIn, poolFee, amountOut, address(this));
-        } else if (dexToBuy == 3) {
-            amountOut = _swapOnCurve(tokenIn, tokenOut, amount);
-            amountBack = _swapOnUniswap(tokenOut, tokenIn, poolFee, amountOut, address(this));
-        } else if (dexToBuy == 4) {
-            amountOut = _swapOnKyber(tokenIn, tokenOut, amount);
-            amountBack = _swapOnUniswap(tokenOut, tokenIn, poolFee, amountOut, address(this));
         } else {
-            revert("Invalid dexToBuy");
+            revert("Invalid dexToBuy value");
         }
 
         uint256 totalOwed = amount + premium;
         require(amountBack >= totalOwed + minProfit, "No sufficient profit");
+
         IERC20(tokenIn).approve(address(POOL), totalOwed);
 
         return true;
@@ -159,24 +153,6 @@ contract FlashLoanArbitrage is IFlashLoanSimpleReceiver {
     function withdraw(address token) external onlyOwner {
         uint256 balance = IERC20(token).balanceOf(address(this));
         IERC20(token).transfer(owner, balance);
-    }
-
-    function _swapOnBalancer(address tokenIn, address tokenOut, uint256 amountIn) private returns (uint256) {
-        // Placeholder, implement Balancer swap logic
-        emit SwapExecuted("Balancer", tokenIn, tokenOut, amountIn, amountIn);
-        return amountIn;
-    }
-
-    function _swapOnCurve(address tokenIn, address tokenOut, uint256 amountIn) private returns (uint256) {
-        // Placeholder, implement Curve swap logic
-        emit SwapExecuted("Curve", tokenIn, tokenOut, amountIn, amountIn);
-        return amountIn;
-    }
-
-    function _swapOnKyber(address tokenIn, address tokenOut, uint256 amountIn) private returns (uint256) {
-        // Placeholder, implement Kyber swap logic
-        emit SwapExecuted("Kyber", tokenIn, tokenOut, amountIn, amountIn);
-        return amountIn;
     }
 
     receive() external payable {}
